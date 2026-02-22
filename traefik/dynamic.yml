@@ -1,0 +1,6 @@
+tls:
+  certificates:
+    - certFile: /certs/api.starterapp.dev.pem
+      keyFile: /certs/api.starterapp.dev-key.pem
+    - certFile: /certs/starterapp.dev.pem
+      keyFile: /certs/starterapp.dev-key.pem

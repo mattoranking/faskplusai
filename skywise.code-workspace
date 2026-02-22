@@ -1,0 +1,24 @@
+{
+	"folders": [
+		{
+			"path": "apps/frontend",
+			"name": "frontend"
+		},
+		{
+			"path": "apps/backend",
+			"name": "backend"
+		},
+		{
+			"path": ".",
+			"name": "root",
+		}
+	],
+	"settings": {
+		// Set the Python interpreter globally, so VS Code stops complaining about invalid interpreter on other folders
+		"python.defaultInterpreterPath": "apps/backend/.venv/bin/python",
+		// Hide apps/ from root to avoid duplication with the dedicated frontend/backend folders
+		"files.exclude": {
+			"apps": true
+		}
+	}
+}

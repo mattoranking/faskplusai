@@ -1,0 +1,259 @@
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to deploy (e.g., v1.0.0)"
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ghcr.io/${{ github.repository }}
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build & Push Production Images
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+      backend_image: ${{ steps.images.outputs.BACKEND_IMAGE }}
+      frontend_image: ${{ steps.images.outputs.FRONTEND_IMAGE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version || github.ref }}
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION=${{ github.event.inputs.version }}
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Deploying version: $VERSION"
+
+      - name: Set image names (lowercase)
+        id: images
+        run: |
+          REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "BACKEND_IMAGE=ghcr.io/${REPO}/backend" >> $GITHUB_OUTPUT
+          echo "FRONTEND_IMAGE=ghcr.io/${REPO}/frontend" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/backend
+          push: true
+          tags: |
+            ${{ steps.images.outputs.BACKEND_IMAGE }}:latest
+            ${{ steps.images.outputs.BACKEND_IMAGE }}:${{ steps.version.outputs.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/frontend
+          push: true
+          tags: |
+            ${{ steps.images.outputs.FRONTEND_IMAGE }}:latest
+            ${{ steps.images.outputs.FRONTEND_IMAGE }}:${{ steps.version.outputs.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to DigitalOcean Production
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    environment:
+      name: production
+      url: ${{ secrets.PRODUCTION_URL }}
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        env:
+          BACKEND_IMG: ${{ needs.build-and-push.outputs.backend_image }}:${{ needs.build-and-push.outputs.version }}
+          FRONTEND_IMG: ${{ needs.build-and-push.outputs.frontend_image }}:${{ needs.build-and-push.outputs.version }}
+          CR_PAT: ${{ secrets.CR_PAT }}
+          GH_ACTOR: ${{ github.actor }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEPLOY_VERSION: ${{ needs.build-and-push.outputs.version }}
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          envs: BACKEND_IMG,FRONTEND_IMG,CR_PAT,GH_ACTOR,DB_PASSWORD,GEMINI_API_KEY,DEPLOY_VERSION
+          script: |
+            set -e
+
+            APP_DIR=/home/deploy/opt/starterapp/production
+            mkdir -p $APP_DIR && cd $APP_DIR
+
+            # Save current version for potential rollback
+            if [ -f .version ]; then
+              cp .version .version.previous
+            fi
+            echo "${DEPLOY_VERSION}" > .version
+
+            # Write docker-compose file
+            cat > docker-compose.yml <<EOF
+            services:
+              postgres:
+                image: postgres:15-alpine
+                container_name: starterapp_db_prod
+                environment:
+                  POSTGRES_USER: ais_user
+                  POSTGRES_PASSWORD: \${DB_PASSWORD}
+                  POSTGRES_DB: starterapp_prod
+                ports:
+                  - "127.0.0.1:5432:5432"
+                volumes:
+                  - postgres_data:/var/lib/postgresql/data
+                networks:
+                  - app-network
+                restart: unless-stopped
+
+              backend:
+                image: ${BACKEND_IMG}
+                container_name: starterapp_backend_prod
+                environment:
+                  DATABASE_URL: postgresql://ais_user:\${DB_PASSWORD}@postgres:5432/starterapp_prod
+                  GEMINI_API_KEY: \${GEMINI_API_KEY}
+                  ENVIRONMENT: production
+                ports:
+                  - "127.0.0.1:8000:8000"
+                depends_on:
+                  - postgres
+                networks:
+                  - app-network
+                restart: unless-stopped
+
+              frontend:
+                image: ${FRONTEND_IMG}
+                container_name: starterapp_frontend_prod
+                environment:
+                  API_URL: http://backend:8000
+                  NODE_ENV: production
+                ports:
+                  - "127.0.0.1:3000:3000"
+                depends_on:
+                  - backend
+                networks:
+                  - app-network
+                restart: unless-stopped
+
+            volumes:
+              postgres_data:
+
+            networks:
+              app-network:
+                driver: bridge
+            EOF
+
+            # Write .env file
+            cat > .env <<EOF
+            DB_PASSWORD=${DB_PASSWORD}
+            GEMINI_API_KEY=${GEMINI_API_KEY}
+            EOF
+
+            # Log in to GHCR
+            echo "${CR_PAT}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
+
+            # Pull and deploy
+            docker compose pull
+            docker compose up -d --force-recreate
+
+            # Aggressive cleanup — remove unused images older than 7 days
+            docker image prune -af --filter "until=168h"
+            docker container prune -f
+            docker volume prune -f
+
+            # Show status
+            docker compose ps
+
+      - name: Health check
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script: |
+            sleep 10
+            for i in 1 2 3 4 5; do
+              if curl -sf http://127.0.0.1:8000/health; then
+                echo "Production is healthy!"
+                exit 0
+              fi
+              echo "Attempt $i/5 failed, retrying in 10s..."
+              sleep 10
+            done
+            echo "Health check failed"
+            exit 1
+
+      - name: Rollback on failure
+        if: failure()
+        uses: appleboy/ssh-action@v1.0.0
+        env:
+          BACKEND_IMG_BASE: ${{ needs.build-and-push.outputs.backend_image }}
+          FRONTEND_IMG_BASE: ${{ needs.build-and-push.outputs.frontend_image }}
+          CR_PAT: ${{ secrets.CR_PAT }}
+          GH_ACTOR: ${{ github.actor }}
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          envs: BACKEND_IMG_BASE,FRONTEND_IMG_BASE,CR_PAT,GH_ACTOR
+          script: |
+            cd /home/deploy/opt/starterapp/production
+
+            if [ -f .version.previous ]; then
+              PREV=$(cat .version.previous)
+              echo "Rolling back to $PREV..."
+
+              echo "${CR_PAT}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
+
+              # Update compose to use previous version images
+              sed -i "s|${BACKEND_IMG_BASE}:.*|${BACKEND_IMG_BASE}:${PREV}|" docker-compose.yml
+              sed -i "s|${FRONTEND_IMG_BASE}:.*|${FRONTEND_IMG_BASE}:${PREV}|" docker-compose.yml
+
+              docker compose pull
+              docker compose up -d --force-recreate
+              echo "Rollback to $PREV complete"
+            else
+              echo "No previous version found for rollback"
+            fi
+
+      - name: Create GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build-and-push.outputs.version }}
+          name: Release ${{ needs.build-and-push.outputs.version }}
+          body: |
+            ## Deployed to Production
+
+            **Version**: ${{ needs.build-and-push.outputs.version }}
+            **URL**: ${{ secrets.PRODUCTION_URL }}
+          generate_release_notes: true
