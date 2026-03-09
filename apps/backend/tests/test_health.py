@@ -1,10 +1,8 @@
-from fastapi.testclient import TestClient
-
-from faskplusai.main import app
-
-client = TestClient(app)
+import pytest
+from httpx import AsyncClient
 
 
-def test_health_endpoint():
-    response = client.get("/health")
+@pytest.mark.asyncio(loop_scope="session")
+async def test_health_endpoint(client: AsyncClient) -> None:
+    response = await client.get("/health")
     assert response.status_code == 200
