@@ -1,11 +1,11 @@
 from fastapi import APIRouter
 
-router = APIRouter(prefix="/clients", tags=["clients"])
+router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.get(
     "/",
-    summary="Retrieve all clients paginated",
+    summary="Retrieve all users paginated",
 )
 async def get_clients() -> str:
-    return "This is the paginated list of clients"
+    return "This is the paginated list of users"
