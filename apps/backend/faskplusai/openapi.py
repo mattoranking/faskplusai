@@ -75,6 +75,14 @@ OPENAPI_PARAMETERS: OpenAPIParameters = {
             "url": "https://stage-api-faskplusai.nestedmind.studio",
             "description": "Staging environment",
         },
+        {
+            "url": "https://api.faskplusai.dev",
+            "description": "Development environment",
+        },
+        {
+            "url": "http://localhost:8000",
+            "description": "Development environment",
+        },
     ],
 }
 
