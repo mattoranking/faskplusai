@@ -263,9 +263,14 @@ jobs:
                 image: ${BACKEND_IMG}
                 container_name: faskplusai_backend_preview_${SLUG}
                 environment:
-                  DATABASE_URL: postgresql://faskplusai:${TEST_DB_PASSWORD}@db:5432/faskplusai_preview_${SLUG}
+                  FASKPLUSAI_ENV: preview
+                  FASKPLUSAI_POSTGRES_USER: faskplusai
+                  FASKPLUSAI_POSTGRES_PWD: ${TEST_DB_PASSWORD}
+                  FASKPLUSAI_POSTGRES_HOST: db
+                  FASKPLUSAI_POSTGRES_PORT: 5432
+                  FASKPLUSAI_POSTGRES_DATABASE: faskplusai_preview_${SLUG}
+                  FASKPLUSAI_CORS_ORIGINS: https://${SLUG}.test-faskplusai.nestedmind.studio
                   GEMINI_API_KEY: ${GEMINI_API_KEY}
-                  ENVIRONMENT: test
                 expose:
                   - "8000"
                 depends_on:
@@ -297,8 +302,8 @@ jobs:
                 image: ${FRONTEND_IMG}
                 container_name: faskplusai_frontend_preview_${SLUG}
                 environment:
-                  API_URL: http://backend:8000
-                  NODE_ENV: development
+                  NEXT_PUBLIC_API_URL: https://${SLUG}.test-api-faskplusai.nestedmind.studio
+                  NODE_ENV: production
                 expose:
                   - "3000"
                 depends_on:

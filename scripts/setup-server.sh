@@ -29,7 +29,7 @@ sudo usermod -aG docker deploy
 
 # Setup deployment directories
 echo "Creating deployment directories..."
-sudo mkdir -p /home/deploy/opt/faskplusai/{staging,preview,traefik}
+sudo mkdir -p /home/deploy/opt/faskplusai/{staging,preview,production,traefik}
 sudo chown -R deploy:deploy /home/deploy/opt/faskplusai
 
 # Create shared Traefik network

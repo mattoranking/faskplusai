@@ -21,12 +21,11 @@ permissions:
 
 jobs:
   build-and-push:
-    name: Build & Push Production Images
+    name: Build & Push Backend Image
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.VERSION }}
       backend_image: ${{ steps.images.outputs.BACKEND_IMAGE }}
-      frontend_image: ${{ steps.images.outputs.FRONTEND_IMAGE }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,7 +47,6 @@ jobs:
         run: |
           REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           echo "BACKEND_IMAGE=ghcr.io/${REPO}/backend" >> $GITHUB_OUTPUT
-          echo "FRONTEND_IMAGE=ghcr.io/${REPO}/frontend" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -71,43 +69,90 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./apps/frontend
-          push: true
-          tags: |
-            ${{ steps.images.outputs.FRONTEND_IMAGE }}:latest
-            ${{ steps.images.outputs.FRONTEND_IMAGE }}:${{ steps.version.outputs.VERSION }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy to DigitalOcean Production
+  deploy-backend:
+    name: Deploy Backend to DigitalOcean
     runs-on: ubuntu-latest
     needs: [build-and-push]
     environment:
       name: production
-      url: ${{ secrets.PRODUCTION_URL }}
+      url: https://${{ secrets.API_DOMAIN }}
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.0
         env:
           BACKEND_IMG: ${{ needs.build-and-push.outputs.backend_image }}:${{ needs.build-and-push.outputs.version }}
-          FRONTEND_IMG: ${{ needs.build-and-push.outputs.frontend_image }}:${{ needs.build-and-push.outputs.version }}
           CR_PAT: ${{ secrets.CR_PAT }}
           GH_ACTOR: ${{ github.actor }}
+          DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          API_DOMAIN: ${{ secrets.API_DOMAIN }}
           DEPLOY_VERSION: ${{ needs.build-and-push.outputs.version }}
         with:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
-          envs: BACKEND_IMG,FRONTEND_IMG,CR_PAT,GH_ACTOR,DB_PASSWORD,GEMINI_API_KEY,DEPLOY_VERSION
+          envs: BACKEND_IMG,CR_PAT,GH_ACTOR,DB_USER,DB_PASSWORD,GEMINI_API_KEY,CORS_ORIGINS,API_DOMAIN,DEPLOY_VERSION
           script: |
             set -e
 
+            # ---- Ensure shared Traefik is running ----
+            TRAEFIK_DIR=/home/deploy/opt/faskplusai/traefik
+            mkdir -p $TRAEFIK_DIR
+            docker network create traefik-public 2>/dev/null || true
+
+            cat > $TRAEFIK_DIR/docker-compose.yml <<'TRAEFIKEOF'
+            services:
+              traefik:
+                image: traefik:v3.6
+                container_name: faskplusai_traefik
+                command:
+                  - "--api.dashboard=false"
+                  - "--providers.docker=true"
+                  - "--providers.docker.exposedbydefault=false"
+                  - "--providers.docker.network=traefik-public"
+                  - "--providers.file.directory=/etc/traefik/dynamic"
+                  - "--providers.file.watch=true"
+                  - "--entrypoints.web.address=:80"
+                  - "--entrypoints.websecure.address=:443"
+                  - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+                  - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
+                  - "--log.level=WARN"
+                ports:
+                  - "80:80"
+                  - "443:443"
+                volumes:
+                  - /var/run/docker.sock:/var/run/docker.sock:ro
+                  - /etc/letsencrypt:/etc/letsencrypt:ro
+                  - ./dynamic:/etc/traefik/dynamic:ro
+                networks:
+                  - traefik-public
+                restart: unless-stopped
+                security_opt:
+                  - no-new-privileges:true
+
+            networks:
+              traefik-public:
+                external: true
+            TRAEFIKEOF
+
+            # Auto-discover all certbot certificates
+            mkdir -p $TRAEFIK_DIR/dynamic
+            echo "tls:" > $TRAEFIK_DIR/dynamic/tls.yml
+            echo "  certificates:" >> $TRAEFIK_DIR/dynamic/tls.yml
+            for cert_dir in /etc/letsencrypt/live/*/; do
+              domain=$(basename "$cert_dir")
+              [ "$domain" = "README" ] && continue
+              if [ -f "${cert_dir}fullchain.pem" ] && [ -f "${cert_dir}privkey.pem" ]; then
+                echo "    - certFile: /etc/letsencrypt/live/${domain}/fullchain.pem" >> $TRAEFIK_DIR/dynamic/tls.yml
+                echo "      keyFile: /etc/letsencrypt/live/${domain}/privkey.pem" >> $TRAEFIK_DIR/dynamic/tls.yml
+              fi
+            done
+
+            cd $TRAEFIK_DIR && docker compose up -d
+
+            # ---- Deploy production app ----
             APP_DIR=/home/deploy/opt/faskplusai/production
             mkdir -p $APP_DIR && cd $APP_DIR
 
@@ -118,77 +163,104 @@ jobs:
             echo "${DEPLOY_VERSION}" > .version
 
             # Write docker-compose file
-            cat > docker-compose.yml <<EOF
+            cat > docker-compose.yml <<'COMPOSE'
             services:
-              postgres:
+              db:
                 image: postgres:15-alpine
                 container_name: faskplusai_db_prod
                 environment:
-                  POSTGRES_USER: ais_user
-                  POSTGRES_PASSWORD: \${DB_PASSWORD}
+                  POSTGRES_USER: ${DB_USER}
+                  POSTGRES_PASSWORD: ${DB_PASSWORD}
                   POSTGRES_DB: faskplusai_prod
-                ports:
-                  - "127.0.0.1:5432:5432"
                 volumes:
                   - postgres_data:/var/lib/postgresql/data
                 networks:
-                  - app-network
+                  - internal
                 restart: unless-stopped
+                healthcheck:
+                  test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+                  interval: 10s
+                  timeout: 5s
+                  retries: 5
 
               backend:
                 image: ${BACKEND_IMG}
                 container_name: faskplusai_backend_prod
                 environment:
-                  DATABASE_URL: postgresql://ais_user:\${DB_PASSWORD}@postgres:5432/faskplusai_prod
-                  GEMINI_API_KEY: \${GEMINI_API_KEY}
-                  ENVIRONMENT: production
-                ports:
-                  - "127.0.0.1:8000:8000"
+                  FASKPLUSAI_ENV: production
+                  FASKPLUSAI_POSTGRES_USER: ${DB_USER}
+                  FASKPLUSAI_POSTGRES_PWD: ${DB_PASSWORD}
+                  FASKPLUSAI_POSTGRES_HOST: db
+                  FASKPLUSAI_POSTGRES_PORT: 5432
+                  FASKPLUSAI_POSTGRES_DATABASE: faskplusai_prod
+                  FASKPLUSAI_CORS_ORIGINS: ${CORS_ORIGINS}
+                  GEMINI_API_KEY: ${GEMINI_API_KEY}
+                expose:
+                  - "8000"
                 depends_on:
-                  - postgres
+                  db:
+                    condition: service_healthy
                 networks:
-                  - app-network
-                restart: unless-stopped
-
-              frontend:
-                image: ${FRONTEND_IMG}
-                container_name: faskplusai_frontend_prod
-                environment:
-                  API_URL: http://backend:8000
-                  NODE_ENV: production
-                ports:
-                  - "127.0.0.1:3000:3000"
-                depends_on:
-                  - backend
-                networks:
-                  - app-network
+                  - internal
+                  - traefik-public
+                labels:
+                  - "traefik.enable=true"
+                  - "traefik.http.routers.prod-backend.rule=Host(`${API_DOMAIN}`)"
+                  - "traefik.http.routers.prod-backend.entrypoints=websecure"
+                  - "traefik.http.routers.prod-backend.tls=true"
+                  - "traefik.http.services.prod-backend.loadbalancer.server.port=8000"
+                  - "traefik.http.routers.prod-backend.middlewares=prod-backend-headers,prod-backend-ratelimit"
+                  - "traefik.http.middlewares.prod-backend-headers.headers.stsSeconds=63072000"
+                  - "traefik.http.middlewares.prod-backend-headers.headers.stsIncludeSubdomains=true"
+                  - "traefik.http.middlewares.prod-backend-headers.headers.stsPreload=true"
+                  - "traefik.http.middlewares.prod-backend-headers.headers.frameDeny=true"
+                  - "traefik.http.middlewares.prod-backend-headers.headers.contentTypeNosniff=true"
+                  - "traefik.http.middlewares.prod-backend-headers.headers.browserXssFilter=true"
+                  - "traefik.http.middlewares.prod-backend-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+                  - "traefik.http.middlewares.prod-backend-headers.headers.permissionsPolicy=camera=(), microphone=(), geolocation=()"
+                  - "traefik.http.middlewares.prod-backend-ratelimit.ratelimit.average=100"
+                  - "traefik.http.middlewares.prod-backend-ratelimit.ratelimit.burst=50"
+                  - "traefik.http.middlewares.prod-backend-ratelimit.ratelimit.period=1s"
+                  - "traefik.http.services.prod-backend.loadbalancer.healthCheck.path=/health"
+                  - "traefik.http.services.prod-backend.loadbalancer.healthCheck.interval=5s"
+                healthcheck:
+                  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+                  interval: 10s
+                  timeout: 5s
+                  retries: 3
+                  start_period: 15s
                 restart: unless-stopped
 
             volumes:
               postgres_data:
 
             networks:
-              app-network:
+              internal:
                 driver: bridge
-            EOF
+              traefik-public:
+                external: true
+            COMPOSE
 
             # Write .env file
             cat > .env <<EOF
+            DB_USER=${DB_USER}
             DB_PASSWORD=${DB_PASSWORD}
             GEMINI_API_KEY=${GEMINI_API_KEY}
+            CORS_ORIGINS=${CORS_ORIGINS}
+            API_DOMAIN=${API_DOMAIN}
+            BACKEND_IMG=${BACKEND_IMG}
             EOF
 
             # Log in to GHCR
             echo "${CR_PAT}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
 
             # Pull and deploy
-            docker compose pull
-            docker compose up -d --force-recreate
+            docker compose pull backend
+            docker compose up -d --wait db
+            docker compose up -d --force-recreate backend
 
-            # Aggressive cleanup — remove unused images older than 7 days
+            # Cleanup unused images older than 7 days
             docker image prune -af --filter "until=168h"
-            docker container prune -f
-            docker volume prune -f
 
             # Show status
             docker compose ps
@@ -203,7 +275,7 @@ jobs:
             sleep 10
             for i in 1 2 3 4 5; do
               if curl -sf http://127.0.0.1:8000/health; then
-                echo "Production is healthy!"
+                echo "Production backend is healthy!"
                 exit 0
               fi
               echo "Attempt $i/5 failed, retrying in 10s..."
@@ -217,14 +289,13 @@ jobs:
         uses: appleboy/ssh-action@v1.0.0
         env:
           BACKEND_IMG_BASE: ${{ needs.build-and-push.outputs.backend_image }}
-          FRONTEND_IMG_BASE: ${{ needs.build-and-push.outputs.frontend_image }}
           CR_PAT: ${{ secrets.CR_PAT }}
           GH_ACTOR: ${{ github.actor }}
         with:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
-          envs: BACKEND_IMG_BASE,FRONTEND_IMG_BASE,CR_PAT,GH_ACTOR
+          envs: BACKEND_IMG_BASE,CR_PAT,GH_ACTOR
           script: |
             cd /home/deploy/opt/faskplusai/production
 
@@ -234,19 +305,59 @@ jobs:
 
               echo "${CR_PAT}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin
 
-              # Update compose to use previous version images
+              # Update compose to use previous version image
               sed -i "s|${BACKEND_IMG_BASE}:.*|${BACKEND_IMG_BASE}:${PREV}|" docker-compose.yml
-              sed -i "s|${FRONTEND_IMG_BASE}:.*|${FRONTEND_IMG_BASE}:${PREV}|" docker-compose.yml
 
-              docker compose pull
-              docker compose up -d --force-recreate
+              docker compose pull backend
+              docker compose up -d --force-recreate backend
               echo "Rollback to $PREV complete"
             else
               echo "No previous version found for rollback"
             fi
 
+  deploy-frontend:
+    name: Deploy Frontend to Vercel
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    environment:
+      name: production
+      url: https://${{ secrets.FRONTEND_DOMAIN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.version || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
+      - name: Pull Vercel environment
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: ./apps/frontend
+
+      - name: Build for production
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: ./apps/frontend
+
+      - name: Deploy to Vercel
+        id: deploy
+        run: |
+          URL=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "DEPLOY_URL=$URL" >> $GITHUB_OUTPUT
+          echo "Deployed to: $URL"
+        working-directory: ./apps/frontend
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-backend, deploy-frontend]
+    if: success()
+    steps:
       - name: Create GitHub Release
-        if: success()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.build-and-push.outputs.version }}
@@ -255,5 +366,6 @@ jobs:
             ## Deployed to Production
 
             **Version**: ${{ needs.build-and-push.outputs.version }}
-            **URL**: ${{ secrets.PRODUCTION_URL }}
+            **Backend**: https://${{ secrets.API_DOMAIN }}
+            **Frontend**: https://${{ secrets.FRONTEND_DOMAIN }}
           generate_release_notes: true

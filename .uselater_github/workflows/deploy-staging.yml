@@ -125,18 +125,19 @@ jobs:
           DEPLOY_SHA: ${{ github.sha }}
           CR_PAT: ${{ secrets.CR_PAT }}
           GH_ACTOR: ${{ github.actor }}
-          faskplusai_POSTGRES_USER: ${{ secrets.faskplusai_POSTGRES_USER }}
-          faskplusai_POSTGRES_PWD: ${{ secrets.faskplusai_POSTGRES_PWD }}
-          faskplusai_POSTGRES_STAGING_DATABASE: ${{ secrets.faskplusai_POSTGRES_STAGING_DATABASE}}
+          FASKPLUSAI_POSTGRES_USER: ${{ secrets.faskplusai_POSTGRES_USER }}
+          FASKPLUSAI_POSTGRES_PWD: ${{ secrets.faskplusai_POSTGRES_PWD }}
+          FASKPLUSAI_POSTGRES_STAGING_DATABASE: ${{ secrets.faskplusai_POSTGRES_STAGING_DATABASE}}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ACME_EMAIL: ${{ secrets.ACME_EMAIL }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
           FRONTEND_DOMAIN: ${{ secrets.STAGING_FRONTEND_DOMAIN }}
           API_DOMAIN: ${{ secrets.STAGING_API_DOMAIN }}
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_SSH_KEY }}
-          envs: BACKEND_IMG,FRONTEND_IMG,DEPLOY_SHA,CR_PAT,GH_ACTOR,faskplusai_POSTGRES_USER,faskplusai_POSTGRES_PWD,faskplusai_POSTGRES_STAGING_DATABASE,GEMINI_API_KEY,ACME_EMAIL,FRONTEND_DOMAIN,API_DOMAIN
+          envs: BACKEND_IMG,FRONTEND_IMG,DEPLOY_SHA,CR_PAT,GH_ACTOR,FASKPLUSAI_POSTGRES_USER,FASKPLUSAI_POSTGRES_PWD,FASKPLUSAI_POSTGRES_STAGING_DATABASE,GEMINI_API_KEY,ACME_EMAIL,CORS_ORIGINS,FRONTEND_DOMAIN,API_DOMAIN
           script: |
             set -e
 
@@ -223,9 +224,14 @@ jobs:
               backend:
                 image: ${BACKEND_IMG}
                 environment:
-                  DATABASE_URL: postgresql://${faskplusai_POSTGRES_USER}:${faskplusai_POSTGRES_PWD}@db:5432/${faskplusai_POSTGRES_STAGING_DATABASE}
+                  FASKPLUSAI_ENV: staging
+                  FASKPLUSAI_POSTGRES_USER: ${faskplusai_POSTGRES_USER}
+                  FASKPLUSAI_POSTGRES_PWD: ${faskplusai_POSTGRES_PWD}
+                  FASKPLUSAI_POSTGRES_HOST: db
+                  FASKPLUSAI_POSTGRES_PORT: 5432
+                  FASKPLUSAI_POSTGRES_DATABASE: ${faskplusai_POSTGRES_STAGING_DATABASE}
+                  FASKPLUSAI_CORS_ORIGINS: ${CORS_ORIGINS}
                   GEMINI_API_KEY: ${GEMINI_API_KEY}
-                  ENVIRONMENT: staging
                 expose:
                   - "8000"
                 depends_on:
@@ -261,7 +267,7 @@ jobs:
               frontend:
                 image: ${FRONTEND_IMG}
                 environment:
-                  API_URL: http://backend:8000
+                  NEXT_PUBLIC_API_URL: https://${API_DOMAIN}
                   NODE_ENV: production
                 expose:
                   - "3000"
@@ -308,6 +314,7 @@ jobs:
             faskplusai_POSTGRES_PWD=${faskplusai_POSTGRES_PWD}
             faskplusai_POSTGRES_STAGING_DATABASE=${faskplusai_POSTGRES_STAGING_DATABASE}
             GEMINI_API_KEY=${GEMINI_API_KEY}
+            CORS_ORIGINS=${CORS_ORIGINS}
             FRONTEND_DOMAIN=${FRONTEND_DOMAIN}
             API_DOMAIN=${API_DOMAIN}
             BACKEND_IMG=${BACKEND_IMG}

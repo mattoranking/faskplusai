@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     POSTGRES_READ_HOST: str | None = None
     POSTGRES_READ_PORT: int | None = None
 
+    # CORS
+    CORS_ORIGINS: str = "http://localhost:3000"
+
     def get_postgres_dsn(self, driver: PostgresDriver) -> PostgresDsn:
         """Build DSN for the primary (read-write) database."""
         return PostgresDsn.build(

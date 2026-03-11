@@ -15,8 +15,10 @@ git pull origin $(git branch --show-current)
 # Build and deploy
 echo "🏗️  Building and deploying containers..."
 if [ "$ENVIRONMENT" == "production" ]; then
-    docker-compose -f docker-compose.prod.yml build
-    docker-compose -f docker-compose.prod.yml up -d --force-recreate
+    echo "❌ Production deployments are handled via CI/CD (tag push or workflow_dispatch)."
+    echo "   Backend deploys to DigitalOcean, frontend deploys to Vercel."
+    echo "   Use: git tag v1.x.x && git push origin v1.x.x"
+    exit 1
 else
     docker-compose -f docker-compose.staging.yml build
     docker-compose -f docker-compose.staging.yml up -d --force-recreate
@@ -28,10 +30,6 @@ docker system prune -af
 
 # Show status
 echo "📊 Container status:"
-if [ "$ENVIRONMENT" == "production" ]; then
-    docker-compose -f docker-compose.prod.yml ps
-else
-    docker-compose -f docker-compose.staging.yml ps
-fi
+docker-compose -f docker-compose.staging.yml ps
 
 echo "✅ Deployment complete!"
