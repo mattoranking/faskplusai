@@ -3,11 +3,11 @@ services:
     image: postgres:15-alpine
     container_name: faskplusai_dev_db
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=faskplusai_dev_db
-    expose:
-      - "5433"
+      POSTGRES_USER: ${FASKPLUSAI_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${FASKPLUSAI_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${FASKPLUSAI_POSTGRES_DB}
+    ports:
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -39,11 +39,14 @@ services:
       dockerfile: Dockerfile
     container_name: faskplusai_dev_backend
     environment:
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
-      POSTGRES_USER: postgres
-      POSTGRES_PWD: postgres
-      POSTGRES_DATABASE: faskplusai_dev_db
+      FASKPLUSAI_ENV: ${FASKPLUSAI_ENV}
+      FASKPLUSAI_POSTGRES_USER: ${FASKPLUSAI_POSTGRES_USER}
+      FASKPLUSAI_POSTGRES_PWD: ${FASKPLUSAI_POSTGRES_PASSWORD}
+      FASKPLUSAI_POSTGRES_HOST: db
+      FASKPLUSAI_POSTGRES_PORT: "5433"
+      FASKPLUSAI_POSTGRES_DATABASE: ${FASKPLUSAI_POSTGRES_DB}
+      FASKPLUSAI_JWT_SECRET_KEY: ${FASKPLUSAI_JWT_SECRET_KEY}
+      FASKPLUSAI_CORS_ORIGINS: ${FASKPLUSAI_CORS_ORIGINS}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
     labels:
       - "traefik.enable=true"
@@ -68,8 +71,8 @@ services:
       dockerfile: Dockerfile
     container_name: faskplusai_dev_frontend
     environment:
-      NEXT_PUBLIC_API_URL: https://api.faskplusai.dev
-      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NODE_ENV: ${NODE_ENV}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.frontend.rule=Host(`faskplusai.dev`)"
@@ -91,9 +94,9 @@ services:
     image: postgres:15-alpine
     container_name: faskplusai_test_db
     environment:
-      - POSTGRES_USER=faskplusai
-      - POSTGRES_PASSWORD=faskplusai
-      - POSTGRES_DB=faskplusai_test_db
+      POSTGRES_USER: faskplusai
+      POSTGRES_PASSWORD: faskplusai
+      POSTGRES_DB: faskplusai_test_db
     ports:
       - "5434:5432"
     tmpfs:

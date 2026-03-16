@@ -3,7 +3,8 @@ BACKEND_DIR := apps/backend
 .PHONY: help setup dev down \
 	backend-fmt backend-lint backend-typecheck \
 	backend-test backend-test-cov backend-test-ci \
-	backend-dev backend-clean
+	backend-dev backend-clean \
+	db-migrate db-upgrade db-downgrade db-history db-current db-stamp
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -22,7 +23,7 @@ setup: ## Set up local dev environment (hosts, certs)
 	@mkcert -cert-file traefik/certs/faskplusai.dev.pem -key-file traefik/certs/faskplusai.dev-key.pem faskplusai.dev
 	@echo "✅ Setup complete"
 
-dev: ## Start all services via docker compose
+up: ## Start all services via docker compose
 	docker compose up --build
 
 down: ## Stop all services
@@ -64,6 +65,26 @@ backend-test-ci: backend-lint backend-typecheck backend-test-cov ## Run full bac
 
 backend-dev: ## Start backend dev server (uvicorn with reload)
 	cd $(BACKEND_DIR) && uv run uvicorn faskplusai.main:app --reload --host 0.0.0.0 --port 8000
+
+# --- Backend: Migrations ---
+
+db-migrate: ## Generate a new migration (usage: make db-migrate m="add users table")
+	cd $(BACKEND_DIR) && uv run alembic revision --autogenerate -m "$(m)"
+
+db-upgrade: ## Apply all pending migrations
+	cd $(BACKEND_DIR) && uv run alembic upgrade head
+
+db-downgrade: ## Revert the last migration
+	cd $(BACKEND_DIR) && uv run alembic downgrade -1
+
+db-history: ## Show migration history
+	cd $(BACKEND_DIR) && uv run alembic history --verbose
+
+db-current: ## Show current migration revision
+	cd $(BACKEND_DIR) && uv run alembic current
+
+db-stamp: ## Stamp DB to head without running migrations
+	cd $(BACKEND_DIR) && uv run alembic stamp head
 
 backend-clean: ## Remove backend build artifacts
 	cd $(BACKEND_DIR) && rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage coverage.xml
