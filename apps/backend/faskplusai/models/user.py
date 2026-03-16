@@ -1,30 +1,25 @@
-import uuid
-from datetime import datetime
+from __future__ import annotations
 
-from sqlalchemy import String, Boolean, DateTime, func
-from sqlalchemy.dialects.postgresql import UUID
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from faskplusai.models.role import UserRole
-from faskplusai.models.refresh_token import RefreshToken
-from faskplusai.database import Base
+from faskplusai.utils.db.models import RecordModel
+
+if TYPE_CHECKING:
+    from faskplusai.models.refresh_token import RefreshToken
+    from faskplusai.models.role import UserRole
 
 
-class User(Base):
+class User(RecordModel):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
     email: Mapped[str] = mapped_column(
         String(255), unique=True, index=True, nullable=False
     )
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        server_default=func.now()
-    )
 
     # Relationships
     roles: Mapped[list["UserRole"]] = relationship(

@@ -1,17 +1,20 @@
-from sqlalchemy import ForeignKey, Integer, String
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from faskplusai.models.user import User
-from faskplusai.database import Base
+from faskplusai.utils.db.models import RecordModel
+
+if TYPE_CHECKING:
+    from faskplusai.models.user import User
 
 
-class Role(Base):
+class Role(RecordModel):
     __tablename__ = "roles"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(
-        String(50), unique=True, nullable=False
-    )
+    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(String(255))
 
     users: Mapped[list["UserRole"]] = relationship(back_populates="role")
@@ -20,46 +23,33 @@ class Role(Base):
     )
 
 
-class Permission(Base):
+class Permission(RecordModel):
     __tablename__ = "permissions"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(
-        String(50), unique=True, nullable=False
-    )
+    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     description: Mapped[str | None] = mapped_column(String(255))
 
-    roles: Mapped[list["RolePermission"]] = relationship(
-        back_populates="permission"
-    )
+    roles: Mapped[list["RolePermission"]] = relationship(back_populates="permission")
 
 
-class UserRole(Base):
+class UserRole(RecordModel):
     __tablename__ = "user_roles"
 
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.id"), primary_key=True
-    )
-    role_id: Mapped[int] = mapped_column(
-        ForeignKey("roles.id"), primary_key=True
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), primary_key=True)
 
     user: Mapped["User"] = relationship(back_populates="roles")
     role: Mapped["Role"] = relationship(back_populates="users")
 
 
-class RolePermission(Base):
+class RolePermission(RecordModel):
     __tablename__ = "role_permissions"
 
-    role_id: Mapped[int] = mapped_column(
-        ForeignKey("roles.id"), primary_key=True
-    )
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), primary_key=True)
 
     permission_id: Mapped[int] = mapped_column(
         ForeignKey("permissions.id"), primary_key=True
     )
 
     role: Mapped["Role"] = relationship(back_populates="permissions")
-    permission: Mapped["Permission"] = relationship(
-        back_populates="roles"
-    )
+    permission: Mapped["Permission"] = relationship(back_populates="roles")

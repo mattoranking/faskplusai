@@ -1,17 +1,20 @@
 from faskplusai.models.user import User
-from faskplusai.models.role import (
+from faskplusai.utils.db.models import Model
+
+from .refresh_token import RefreshToken
+from .role import (
     Permission,
     Role,
     RolePermission,
     UserRole,
 )
-from faskplusai.models.refresh_token import RefreshToken
 
 __all__ = [
-    "User",
-    "Role",
+    "Model",
     "Permission",
-    "UserRole",
+    "Role",
     "RolePermission",
     "RefreshToken",
+    "User",
+    "UserRole",
 ]
