@@ -104,6 +104,14 @@ services:
     networks:
       - app-network
 
+  redis:
+    image: redis:7-alpine
+    container_name: faskplusai_dev_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+
 volumes:
   postgres_data:
 
