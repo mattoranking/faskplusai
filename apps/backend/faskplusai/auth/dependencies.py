@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from faskplusai.config import settings
 from faskplusai.models.user import User
 from faskplusai.postgres import get_db_session
+from .permissions import get_permissions_for_roles
 
 bearer_scheme = HTTPBearer()
 
@@ -40,9 +41,8 @@ def require_permission(permission: str):
     async def checker(
         user: Annotated[User, Depends(get_current_user)],
     ) -> User:
-        user_permissions = {
-            rp.permission.name for ur in user.roles for rp in ur.role.permissions
-        }
+        roles = [ur.role.name for ur in user.roles]
+        user_permissions = await get_permissions_for_roles(roles)
         if permission not in user_permissions:
             raise HTTPException(
                 status_code=403,
