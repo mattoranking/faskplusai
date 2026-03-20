@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from faskplusai.config import settings
 from faskplusai.models.user import User
 from faskplusai.postgres import get_db_session
-from .permissions import get_permissions_for_roles
+from faskplusai.auth.permissions import get_permissions_for_roles
 
 bearer_scheme = HTTPBearer()
 
