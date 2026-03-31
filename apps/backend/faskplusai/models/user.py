@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from faskplusai.utils.db.models import RecordModel
 
 if TYPE_CHECKING:
+    from faskplusai.models.oauth_account import OAuthAccount
     from faskplusai.models.refresh_token import RefreshToken
     from faskplusai.models.role import UserRole
 
@@ -28,4 +29,8 @@ class User(RecordModel):
 
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
+    )
+
+    oauth_accounts: Mapped[list["OAuthAccount"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin"
     )
