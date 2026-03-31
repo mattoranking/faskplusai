@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -19,14 +20,15 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(
     user_id: str,
-    roles: list[str],
+    scopes: list[str],
 ) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
     payload: dict[str, Any] = {
         "sub": user_id,
-        "roles": roles,
+        "jti": str(uuid.uuid4()),
+        "scopes": scopes,
         "type": "access",
         "exp": expire,
     }

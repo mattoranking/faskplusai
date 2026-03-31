@@ -70,3 +70,63 @@ async def invalidate_role_cache(role_name: str) -> None:
     """Call this when role permissions are updated."""
     r = await get_redis()
     await r.delete(f"role:{role_name}:permissions")
+
+
+# ---------------------------------------------------------------------------
+# Scope resolution: roles → validated Scope enum values
+# ---------------------------------------------------------------------------
+
+async def get_scopes_for_roles(roles: list[str]) -> set[str]:
+    """Resolve roles to validated scope strings.
+
+    Fetches raw permissions via the Redis-cached RBAC lookup,
+    then filters to only those that match a known Scope member.
+    Unknown permissions (legacy, typos) are silently dropped.
+    """
+    from faskplusai.auth.scope import Scope
+
+    raw_permissions = await get_permissions_for_roles(roles)
+    scopes: set[str] = set()
+    for perm in raw_permissions:
+        try:
+            scopes.add(Scope(perm).value)
+        except ValueError:
+            continue
+    return scopes
+
+
+# ---------------------------------------------------------------------------
+# Token blocklist: for emergency revocation of access tokens
+# ---------------------------------------------------------------------------
+
+_BLOCKLIST_PREFIX = "blocked_token:"
+
+
+async def block_token(jti: str, ttl_seconds: int | None = None) -> None:
+    """Add a token JTI to the blocklist.
+
+    TTL defaults to the access token lifetime so entries
+    auto-expire once the token would have expired anyway.
+    """
+    r = await get_redis()
+    ttl = ttl_seconds or settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    await r.set(f"{_BLOCKLIST_PREFIX}{jti}", "1", ex=ttl)
+
+
+async def is_token_blocked(jti: str) -> bool:
+    """Check if a token JTI has been revoked."""
+    r = await get_redis()
+    return await r.exists(f"{_BLOCKLIST_PREFIX}{jti}") > 0
+
+
+async def block_all_user_tokens(user_id: str) -> None:
+    """Flag a user so the middleware rejects any access token.
+
+    Unlike per-JTI blocking, this covers tokens whose JTI we
+    don't know (e.g., compromised account). The middleware
+    checks this flag alongside the per-JTI blocklist.
+    TTL matches access token lifetime.
+    """
+    r = await get_redis()
+    ttl = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    await r.set(f"blocked_user:{user_id}", "1", ex=ttl)

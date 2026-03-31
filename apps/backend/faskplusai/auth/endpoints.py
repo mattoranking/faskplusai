@@ -17,6 +17,7 @@ from faskplusai.auth.schemas import (
     TokenResponse,
     UserResponse,
 )
+from faskplusai.auth.permissions import get_scopes_for_roles
 from faskplusai.auth.service import (
     create_access_token,
     create_refresh_token,
@@ -65,7 +66,8 @@ async def login(
         raise HTTPException(status_code=403, detail="Account deactivated")
 
     roles = [ur.role.name for ur in user.roles]
-    access_token = create_access_token(str(user.id), roles)
+    scopes = await get_scopes_for_roles(roles)
+    access_token = create_access_token(str(user.id), list(scopes))
     refresh_token, expires_at = create_refresh_token(str(user.id))
 
     await store_refresh_token(
@@ -110,7 +112,8 @@ async def refresh(
     await revoke_user_refresh_tokens(session, user.id)
 
     roles = [ur.role.name for ur in user.roles]
-    new_access = create_access_token(str(user.id), roles)
+    scopes = await get_scopes_for_roles(roles)
+    new_access = create_access_token(str(user.id), list(scopes))
     new_refresh, expires_at = create_refresh_token(str(user.id))
 
     await store_refresh_token(
